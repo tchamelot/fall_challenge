@@ -21,20 +21,22 @@ class Witch:
         self.inventory = np.array([int(x) for x in player[:4]])
         self.rubis = int(player[-1])
 
-    def action(self, orders):
+    def action(self, actions):
         """
         Select the action to do
         """
-        target = orders.best(self.inventory)
+        target = actions.best(self.inventory)
         print(f'BREW {target}')
 
 
-class Orders:
+class Actions:
     """
-    Base class for client's orders
+    Base class for actions
     """
     def __init__(self):
         self.orders = {}
+        self.ally_cast = {}
+        self.enemy_cast = {}
 
     def parse(self):
         """
@@ -43,12 +45,16 @@ class Orders:
         nb_action = int(input())
         self.orders = {}
         for _ in range(nb_action):
-            aid, atype, d0, d1, d2, d3, price, _, _, _, _ = input().split()
-            self.orders[aid] = {
-                    'type': atype,
+            aid, atype, d0, d1, d2, d3, price, _, _, castable, _ = input().split()
+            if castable and atype == "CAST":
+                self.ally_cast[aid] = np.array([int(d0), int(d1), int(d2), int(d3)])
+            elif castable and atype == "OPPONENT_CAST":
+                self.enemy_cast[aid] = np.array([int(d0), int(d1), int(d2), int(d3)])
+            elif atype == "BREW":
+                self.orders[aid] = {
                     'recipe': np.array([int(d0), int(d1), int(d2), int(d3)]),
                     'price': int(price),
-            }
+                    }
 
     def best(self, inventory):
         """
@@ -73,13 +79,13 @@ def main():
     """
     ally = Witch()
     enemy = Witch()
-    orders = Orders()
+    actions = Actions()
 
     while True:
-        orders.parse()
+        actions.parse()
         ally.parse()
         enemy.parse()
-        ally.action(orders)
+        ally.action(actions)
 
 
 if __name__ == '__main__':
