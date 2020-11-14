@@ -1,100 +1,95 @@
-"""
-Python script for the codingame fall challenge 2020
-"""
 import sys
 import numpy as np
+from enum import IntEnum
 
 
-class Witch:
-    """
-    Base class for the players
-    """
-    def __init__(self):
-        self.inventory = []
-        self.rubis = 0
-
-    def parse(self):
-        """
-        Read witch from stdin
-        """
-        player = input().split()
-        self.inventory = np.array([int(x) for x in player[:4]])
-        self.rubis = int(player[-1])
-
-    def action(self, actions):
-        """
-        Select the action to do
-        """
-        target = actions.best(self.inventory)
-        print(target)
+class Types(IntEnum):
+    BREW = 0
+    CAST = 1
+    LEARN = 2
+    OPPONENT_CAST = 3
+    LEARNED_CAST = 4
+    OPPONENT_LEARNED_CAST = 5
 
 
-class Actions:
-    """
-    Base class for actions
-    """
-    def __init__(self):
-        self.orders = {}
-        self.ally_cast = {}
-        self.enemy_cast = {}
+types = {
+    "BREW": 0,
+    "CAST": 1,
+    "LEARN": 2,
+    "OPPONENT_CAST": 3,
+}
 
-    def parse(self):
-        """
-        Read orders from stdin
-        """
-        nb_action = int(input())
-        self.orders = {}
-        self.ally_cast = {}
-        self.enemy_cast = {}
-        for _ in range(nb_action):
-            aid, atype, d0, d1, d2, d3, price, _, _, castable, _ = input().split()
-            if castable == "1" and atype == "CAST":
-                self.ally_cast[aid] = np.array([int(d0), int(d1), int(d2), int(d3)])
-            elif castable == "1" and atype == "OPPONENT_CAST":
-                self.enemy_cast[aid] = np.array([int(d0), int(d1), int(d2), int(d3)])
-            elif atype == "BREW":
-                self.orders[aid] = {
-                    'recipe': np.array([int(d0), int(d1), int(d2), int(d3)]),
-                    'price': int(price),
-                    }
-
-    def best(self, inventory):
-        """
-        return the best order given an inventory
-        """
-        self.orders = dict(sorted(
-            self.orders.items(),
-            key=lambda item: item[1]['price'],
-            reverse=True))
-
-        for order_id, order in self.orders.items():
-            if (inventory + order['recipe']).min() >= 0:
-                return f'BREW {order_id}'
-
-        for cast_id, cast in self.ally_cast.items():
-            new_inventory = inventory + cast
-            # print(new_inventory, file=sys.stderr)
-            if new_inventory.sum() <= 10 and new_inventory.min() >= 0:
-                return f'CAST {cast_id}'
-
-        return 'REST'
+action_parsers = [
+    int,
+    lambda x: types[x],
+    int,
+    int,
+    int,
+    int,
+    int,
+    int,
+    int,
+    lambda x: x != "0",
+    lambda x: x != "0",
+]
 
 
-
-def main():
-    """
-    Main loop
-    """
-    ally = Witch()
-    enemy = Witch()
-    actions = Actions()
-
-    while True:
-        actions.parse()
-        ally.parse()
-        enemy.parse()
-        ally.action(actions)
+def score_state(state, inventory):
+    return inventory[0, -1] - inventory[1, -1]
 
 
-if __name__ == '__main__':
-    sys.exit(main())
+def available_actions(state, inventory, player):
+    return []
+
+
+def predict(user_action, other_action, state, inventory):
+    if user_action[1] != Types.LEARN:
+        pass
+    new_state = state
+    new_inventory = inventory
+    return new_state, new_inventory
+
+
+max_depth = 2
+
+
+def minmax(state, inventory, depth):
+    # 1. termination criterion
+    if depth == max_depth:
+        return score_state(state, inventory), None
+    # todo: other ways to end a game
+    # 2. exploration
+    best_score = -np.inf
+    best_action = None
+    for action_0 in available_actions(state, inventory, 0):
+        worst_score = np.inf
+        for action_1 in available_actions(state, inventory, 1):
+            new_state, new_inventory = predict(action_0, action_1, state, inventory)
+            score, action = minmax(new_state, new_inventory, depth + 1)
+            if worst_score <= worst_score:
+                worst_score = score
+        if score >= best_score:
+            best_score = worst_score
+            best_action = action_0
+    return best_score, best_action
+
+
+# game loop
+dump_input_at = 16  # if other than -1, stop game at step i and print the input values
+step = 0
+while True:
+    if step == dump_input_at:
+        break
+    step += 1
+    action_count = int(input())  # the number of spells and recipes in play
+    state = np.array(
+        [
+            [parser(inp) for parser, inp in zip(action_parsers, input().split())]
+            for _ in range(action_count)
+        ]
+    )
+    inventory = np.array([[int(j) for j in input().split()] for i in range(2)])
+    score, action = minmax(state, inventory, 0)
+    print("REST")
+while True:
+    print(input(), file=sys.stderr)
