@@ -122,18 +122,22 @@ def predict(user_action, other_action, state, new_inventory):
     Returns: the state of the game at t+1 an the inventory of both players at t+1
     """
     new_inventory = inventory.copy()
-    state_filter = np.logical_not(np.isin(state[:,0], np.array([user_action[0], other_action[0]])))
+    new_state = state.copy()
+    user_action = user_action.copy()
+    # other_action = other_action.copy()
+    state_filter = np.logical_not(state[:,0] == user_action[0])
+    # state_filter = np.logical_not(np.isin(state[:,0], np.array([user_action[0], other_action[0]])))
     # remove played actions
-    new_state = state[state_filter].copy()
+    new_state = new_state[state_filter]
     # brew and cast works the same way
     if (user_action[Col.TYPE] == Types.CAST) or (user_action[Col.TYPE] == Types.BREW):
         # just update the inventory and set it as not castable
-        new_inventory[0] += user_action[Col.D1:Col.D4+1]
+        new_inventory[0] += user_action[Col.D1:Col.PRICE+1]
         # set castable to false
         user_action[Col.CASTABLE] = False
         new_state = np.vstack([new_state, user_action])
     if user_action[Col.TYPE] == Types.LEARN:
-        new_inventory[0, 0] -= user_action[Col.TAX] + user_action[Col.TOME_INDEX]
+        new_inventory[0, 0] += user_action[Col.TAX] - user_action[Col.TOME_INDEX]
         # change type
         user_action[Col.TYPE] = Types.CAST
         # set castable
