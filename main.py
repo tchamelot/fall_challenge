@@ -151,24 +151,24 @@ def predict(user_action, other_action, state, new_inventory):
         new_state[:, Col.CASTABLE] = np.where(new_state[:, Col.TYPE] == Types.CAST, 1, new_state[:, Col.TYPE])
         new_state = np.vstack([new_state, user_action])
 
-    # do the same for opponent
-    if (other_action[Col.TYPE] == Types.CAST) or (other_action[Col.TYPE] == Types.BREW):
-        # just update the inventory and set it as not castable
-        new_inventory[1] += other_action[Col.D1:Col.PRICE+1]
-        # set castable to false
-        other_action[Col.CASTABLE] = False
-        new_state = np.vstack([new_state, other_action])
-    if other_action[Col.TYPE] == Types.LEARN:
-        new_inventory[1, 0] += other_action[Col.TAX] - other_action[Col.TOME_INDEX]
-        # change type
-        other_action[Col.TYPE] = Types.OPPONENT_CAST
-        # set castable
-        other_action[Col.CASTABLE] = True
-        # put it back
-        new_state = np.vstack([new_state, other_action])
-    if other_action[Col.TYPE] == Types.REST:
-        new_state[:, Col.CASTABLE] = np.where(new_state[:, Col.TYPE] == Types.OPPONENT_CAST, 1, new_state[:, Col.TYPE])
-        new_state = np.vstack([new_state, other_action])
+    # # do the same for opponent
+    # if (other_action[Col.TYPE] == Types.CAST) or (other_action[Col.TYPE] == Types.BREW):
+    #     # just update the inventory and set it as not castable
+    #     new_inventory[1] += other_action[Col.D1:Col.PRICE+1]
+    #     # set castable to false
+    #     other_action[Col.CASTABLE] = False
+    #     new_state = np.vstack([new_state, other_action])
+    # if other_action[Col.TYPE] == Types.LEARN:
+    #     new_inventory[1, 0] += other_action[Col.TAX] - other_action[Col.TOME_INDEX]
+    #     # change type
+    #     other_action[Col.TYPE] = Types.OPPONENT_CAST
+    #     # set castable
+    #     other_action[Col.CASTABLE] = True
+    #     # put it back
+    #     new_state = np.vstack([new_state, other_action])
+    # if other_action[Col.TYPE] == Types.REST:
+    #     new_state[:, Col.CASTABLE] = np.where(new_state[:, Col.TYPE] == Types.OPPONENT_CAST, 1, new_state[:, Col.TYPE])
+    #     new_state = np.vstack([new_state, other_action])
     # # _, _, d0, d1, d2, d3, price, tome_index, tax, _, _ = user_action
     # # inventory[0] += [d0 - tome_index + tax, d1, d2, d3, price]
     # # _, _, d0, d1, d2, d3, price, tome_index, tax, _, _ = other_action
@@ -195,17 +195,16 @@ def minmax(state, inventory, depth):
     # todo: other ways to end a game
     # 2. exploration
     best_score = -np.inf
-    score = best_score
     best_action = None
     for action_0 in available_actions(state, inventory, 0):
-        worst_score = np.inf
-        for action_1 in available_actions(state, inventory, 1):
-            new_state, new_inventory = predict(action_0, action_1, state, inventory)
-            score, action = minmax(new_state, new_inventory, depth + 1)
-            if worst_score <= worst_score:
-                worst_score = score
-        if score >= best_score:
-            best_score = worst_score
+        # worst_score = np.inf
+        # for action_1 in available_actions(state, inventory, 1):
+        new_state, new_inventory = predict(action_0, None, state, inventory)
+        score, action = minmax(new_state, new_inventory, depth + 1)
+            # if score < worst_score:
+            #     worst_score = score
+        if score > best_score:
+            best_score = score
             best_action = action_0
     return best_score, best_action
 
