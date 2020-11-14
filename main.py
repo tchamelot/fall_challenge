@@ -9,8 +9,7 @@ class Types(IntEnum):
     CAST = 1
     OPPONENT_CAST = 2
     LEARN = 3
-    LEARNED_CAST = 4
-    OPPONENT_LEARNED_CAST = 5
+    REST = 4
 
 
 class Col(IntEnum):
@@ -32,6 +31,7 @@ types = {
     "CAST": 1,
     "OPPONENT_CAST": 2,
     "LEARN": 3,
+    "REST":4
 }
 
 inv_types = {
@@ -39,6 +39,7 @@ inv_types = {
     1: "CAST",
     2: "OPPONENT_CAST",
     3: "LEARN",
+    4: "REST"
 }
 
 # function used to parse each input
@@ -146,26 +147,32 @@ def predict(user_action, other_action, state, new_inventory):
         user_action[Col.CASTABLE] = True
         # put it back
         new_state = np.vstack([new_state, user_action])
+    if user_action[Col.TYPE] == Types.REST:
+        new_state[:, Col.CASTABLE] = np.where(new_state[:, Col.TYPE] == Types.CAST, 1, new_state[:, Col.TYPE])
+        new_state = np.vstack([new_state, user_action])
 
     # do the same for opponent
     if (other_action[Col.TYPE] == Types.CAST) or (other_action[Col.TYPE] == Types.BREW):
         # just update the inventory and set it as not castable
-        new_inventory[1] += other_action[Col.D1:Col.D4+1]
+        new_inventory[1] += other_action[Col.D1:Col.PRICE+1]
         # set castable to false
         other_action[Col.CASTABLE] = False
         new_state = np.vstack([new_state, other_action])
     if other_action[Col.TYPE] == Types.LEARN:
-        new_inventory[1, 0] -= other_action[Col.TAX] + other_action[Col.TOME_INDEX]
+        new_inventory[1, 0] += other_action[Col.TAX] - other_action[Col.TOME_INDEX]
         # change type
         other_action[Col.TYPE] = Types.OPPONENT_CAST
         # set castable
         other_action[Col.CASTABLE] = True
         # put it back
         new_state = np.vstack([new_state, other_action])
-    # _, _, d0, d1, d2, d3, price, tome_index, tax, _, _ = user_action
-    # inventory[0] += [d0 - tome_index + tax, d1, d2, d3, price]
-    # _, _, d0, d1, d2, d3, price, tome_index, tax, _, _ = other_action
-    # inventory[1] += [d0 - tome_index + tax, d1, d2, d3, price]
+    if other_action[Col.TYPE] == Types.REST:
+        new_state[:, Col.CASTABLE] = np.where(new_state[:, Col.TYPE] == Types.OPPONENT_CAST, 1, new_state[:, Col.TYPE])
+        new_state = np.vstack([new_state, other_action])
+    # # _, _, d0, d1, d2, d3, price, tome_index, tax, _, _ = user_action
+    # # inventory[0] += [d0 - tome_index + tax, d1, d2, d3, price]
+    # # _, _, d0, d1, d2, d3, price, tome_index, tax, _, _ = other_action
+    # # inventory[1] += [d0 - tome_index + tax, d1, d2, d3, price]
     return new_state, new_inventory
 
 
@@ -211,19 +218,16 @@ while True:
         break
     step += 1
     action_count = int(input())  # the number of spells and recipes in play
-    state = np.array(
+    state = np.vstack(
         [
             [parser(inp) for parser, inp in zip(action_parsers, input().split())]
             for _ in range(action_count)
-        ]
+        ] +
+        [[0, Types.REST, 0,0,0,0, 0,0,0,True,True]]
     )
     inventory = np.array([[int(j) for j in input().split()] for i in range(2)])
     score, action = minmax(state, inventory, 0)
-    #print(score, action, file=sys.stderr)
-    if action is None:
-        print('REST')
-    else:
-        print(f'{inv_types[action[1]]} {action[0]}')
+    print(f'{inv_types[action[1]]} {action[0]} {score}')
 
 while True:
     print(input(), file=sys.stderr)
