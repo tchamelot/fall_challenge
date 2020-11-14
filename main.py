@@ -92,17 +92,19 @@ def available_actions(state, inventory, player):
 
     """
     action_filter = list()
-    for _, atype, d0, d1, d2, d3, _, tome_index, _, castable, _ in state:
+    for _, atype, d0, d1, d2, d3, _, tome_index, tax, castable, _ in state:
         new_inventory = np.array([d0, d1, d2, d3]) + inventory[player][:4]
         craftable = new_inventory.min() > 0
-        full = new_inventory.sum() > 10
-        if craftable and atype == 0:  # BREW
+        not_full = new_inventory.sum() < 10
+        if atype == Types.REST:
             action_filter.append(True)
-        elif craftable and castable and player == 0 and atype == 1 and full: # CAST
+        elif craftable and atype == Types.BREW:  # BREW
             action_filter.append(True)
-        elif craftable and castable and player == 1 and atype == 2 and full: # OPPONENT_CAST
+        elif craftable and castable and player == 0 and atype == Types.CAST and not_full: # CAST
             action_filter.append(True)
-        elif atype == 3 and inventory[player][0] > tome_index: # LEARN
+        elif craftable and castable and player == 1 and atype == Types.OPPONENT_CAST and not_full: # OPPONENT_CAST
+            action_filter.append(True)
+        elif atype == Types.LEARN and inventory[player][0] >= tome_index: # LEARN
             action_filter.append(True)
         else:
             action_filter.append(False)
