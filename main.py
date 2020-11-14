@@ -13,6 +13,19 @@ class Types(IntEnum):
     OPPONENT_LEARNED_CAST = 5
 
 
+class Col(IntEnum):
+    ID = 0
+    TYPE = 1
+    D1 = 2
+    D2 = 3
+    D3 = 4
+    D4 = 5
+    PRICE = 6
+    TOME_INDEX = 7
+    TAX = 8
+    CASTABLE = 9
+    REPEATABLE = 10
+
 # dict used to parse input
 types = {
     "BREW": 0,
@@ -83,7 +96,7 @@ def available_actions(state, inventory, player):
         new_inventory = np.array([d0, d1, d2, d3]) + inventory[player][:4]
         craftable = new_inventory.min() > 0
         full = new_inventory.sum() > 10
-        if craftable and atype == 0: # BREW
+        if craftable and atype == 0:  # BREW
             action_filter.append(True)
         elif craftable and castable and player == 0 and atype == 1 and full: # CAST
             action_filter.append(True)
@@ -97,24 +110,57 @@ def available_actions(state, inventory, player):
     return state[action_filter]
 
 
-def predict(user_action, other_action, state, inventory):
+def predict(user_action, other_action, state, new_inventory):
     """
 
     Args:
         user_action: the action executed by our player
         other_action: the action executed by the other player
         state: the state of the game a step t
-        inventory: the inventory of both players at step t+1
+        new_inventory: the inventory of both players at step t+1
 
     Returns: the state of the game at t+1 an the inventory of both players at t+1
     """
+    new_inventory = inventory.copy()
     state_filter = np.logical_not(np.isin(state[:,0], np.array([user_action[0], other_action[0]])))
-    new_state = state[state_filter]
-    _, _, d0, d1, d2, d3, price, tome_index, tax, _, _ = user_action
-    inventory[0] += [d0 - tome_index + tax, d1, d2, d3, price]
-    _, _, d0, d1, d2, d3, price, tome_index, tax, _, _ = other_action
-    inventory[1] += [d0 - tome_index + tax, d1, d2, d3, price]
-    return new_state, inventory
+    # remove played actions
+    new_state = state[state_filter].copy()
+    # brew and cast works the same way
+    if (user_action[Col.TYPE] == Types.CAST) or (user_action[Col.TYPE] == Types.BREW):
+        # just update the inventory and set it as not castable
+        new_inventory[0] += user_action[Col.D1:Col.D4+1]
+        # set castable to false
+        user_action[Col.CASTABLE] = False
+        new_state = np.vstack([new_state, user_action])
+    if user_action[Col.TYPE] == Types.LEARN:
+        new_inventory[0, 0] -= user_action[Col.TAX] + user_action[Col.TOME_INDEX]
+        # change type
+        user_action[Col.TYPE] = Types.CAST
+        # set castable
+        user_action[Col.CASTABLE] = True
+        # put it back
+        new_state = np.vstack([new_state, user_action])
+
+    # do the same for opponent
+    if (other_action[Col.TYPE] == Types.CAST) or (other_action[Col.TYPE] == Types.BREW):
+        # just update the inventory and set it as not castable
+        new_inventory[1] += other_action[Col.D1:Col.D4+1]
+        # set castable to false
+        other_action[Col.CASTABLE] = False
+        new_state = np.vstack([new_state, other_action])
+    if other_action[Col.TYPE] == Types.LEARN:
+        new_inventory[1, 0] -= other_action[Col.TAX] + other_action[Col.TOME_INDEX]
+        # change type
+        other_action[Col.TYPE] = Types.OPPONENT_CAST
+        # set castable
+        other_action[Col.CASTABLE] = True
+        # put it back
+        new_state = np.vstack([new_state, other_action])
+    # _, _, d0, d1, d2, d3, price, tome_index, tax, _, _ = user_action
+    # inventory[0] += [d0 - tome_index + tax, d1, d2, d3, price]
+    # _, _, d0, d1, d2, d3, price, tome_index, tax, _, _ = other_action
+    # inventory[1] += [d0 - tome_index + tax, d1, d2, d3, price]
+    return new_state, new_inventory
 
 
 max_depth = 2
@@ -171,7 +217,7 @@ while True:
     if action is None:
         print('REST')
     else:
-        print(f'{list(types.keys())[action[1]]} {action[0]}')
+        print(f'{inv_types[action[1]]} {action[0]}')
 
 while True:
     print(input(), file=sys.stderr)
