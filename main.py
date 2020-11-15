@@ -95,7 +95,7 @@ def available_actions(state, inventory, player):
     action_filter = list()
     for _, atype, d0, d1, d2, d3, _, tome_index, tax, castable, _ in state:
         new_inventory = np.array([d0, d1, d2, d3]) + inventory[player][:4]
-        craftable = new_inventory.min() > 0
+        craftable = new_inventory.min() >= 0
         not_full = new_inventory.sum() < 10
         if atype == Types.REST:
             action_filter.append(True)
