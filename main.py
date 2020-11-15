@@ -233,7 +233,10 @@ while True:
         [[-1, Types.REST, 0,0,0,0, 0,0,0,True,True]]
     )
     inventory = np.array([[int(j) for j in input().split()] for i in range(2)])
+    t1 = time.thread_time()
     score, action = minmax(state, inventory, 0)
+    t2 = time.thread_time()
+    print(f'execution took : {t2-t1} s', file=sys.stderr)
     print(f'{inv_types[action[1]]} {action[0]} {score}')
 
 while True:
