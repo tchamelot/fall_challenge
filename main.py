@@ -230,7 +230,7 @@ while True:
             [parser(inp) for parser, inp in zip(action_parsers, input().split())]
             for _ in range(action_count)
         ] +
-        [[0, Types.REST, 0,0,0,0, 0,0,0,True,True]]
+        [[-1, Types.REST, 0,0,0,0, 0,0,0,True,True]]
     )
     inventory = np.array([[int(j) for j in input().split()] for i in range(2)])
     score, action = minmax(state, inventory, 0)
