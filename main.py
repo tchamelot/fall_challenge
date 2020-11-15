@@ -1,6 +1,7 @@
 import sys
 import numpy as np
 from enum import IntEnum
+import time
 
 
 # enum for types
@@ -58,7 +59,7 @@ action_parsers = [
 ]
 
 
-def score_state(state, inventory):
+def score_state(state, inventory, depth):
     """
     Args:
         state: state of the game
@@ -128,7 +129,7 @@ def predict(user_action, other_action, state, new_inventory):
     new_state = state.copy()
     user_action = user_action.copy()
     # other_action = other_action.copy()
-    state_filter = np.logical_not(state[:,0] == user_action[0])
+    state_filter = np.logical_not(state[:, 0] == user_action[0])
     # state_filter = np.logical_not(np.isin(state[:,0], np.array([user_action[0], other_action[0]])))
     # remove played actions
     new_state = new_state[state_filter]
@@ -191,12 +192,19 @@ def minmax(state, inventory, depth):
     """
     # 1. termination criterion
     if depth == max_depth:
-        return score_state(state, inventory), None
+        return score_state(state, inventory, depth), None
+    actions = available_actions(state, inventory, 0)
+    if np.isin(Types.BREW, actions[:, Col.TYPE]):
+        brews = actions[actions[:, Col.TYPE] == Types.BREW]
+        # score = brews[:, Col.PRICE].sum() / (depth+1) + inventory[0, -1]
+        score = score_state(state, inventory, depth)
+        action = brews[np.argmax(brews[:, Col.PRICE])]
+        return score, action
     # todo: other ways to end a game
     # 2. exploration
     best_score = -np.inf
     best_action = None
-    for action_0 in available_actions(state, inventory, 0):
+    for action_0 in actions:
         # worst_score = np.inf
         # for action_1 in available_actions(state, inventory, 1):
         new_state, new_inventory = predict(action_0, None, state, inventory)
