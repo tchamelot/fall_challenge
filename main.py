@@ -68,20 +68,13 @@ def score_state(state, inventory, depth):
     Returns: the score describing the "goodness" of a state
 
     """
-    # Calcul de coup en distance
-    # coup = price - d0 * 1 - d1 *2 - d2 *3 -d3 *4
-    cost = np.array([1, 2, 3, 4, 1])
-    scores = np.array([])
-    for _, atype, d0, d1, d2, d3, price, _, _, _, _ in state:
-        recipe = np.array([d0, d1, d2, d3, price])
-        if atype == 0:
-            user_score = ((inventory[0] + recipe) * cost).sum()
-            other_score = ((inventory[1] + recipe) * cost).sum()
-            scores = np.append(scores, user_score - other_score)
-        else:
-            scores = np.append(scores, 0)
-
-    return np.mean(scores)
+    # score = np.clip(
+    #     state[state[:, Col.TYPE] == Types.BREW, Col.D1:Col.D4+1] + inventory[0, :-1]
+    #     , None, 0).sum(axis=1).min() + inventory[0, -1]
+    # print((" " * depth) + "|"+str(score))
+    return np.clip(
+        state[state[:, Col.TYPE] == Types.BREW, Col.D1:Col.D4+1] + inventory[0, :-1]
+        , None, 0).sum(axis=1).min() + inventory[0, -1]
 
 
 def available_actions(state, inventory, player):
@@ -94,27 +87,36 @@ def available_actions(state, inventory, player):
 
     """
     action_filter = list()
-    for _, atype, d0, d1, d2, d3, _, tome_index, tax, castable, _ in state:
-        new_inventory = np.array([d0, d1, d2, d3]) + inventory[player][:4]
-        craftable = new_inventory.min() >= 0
-        not_full = new_inventory.sum() < 10
-        if atype == Types.REST:
-            action_filter.append(True)
-        elif craftable and atype == Types.BREW:  # BREW
-            action_filter.append(True)
-        elif craftable and castable and player == 0 and atype == Types.CAST and not_full: # CAST
-            action_filter.append(True)
-        elif craftable and castable and player == 1 and atype == Types.OPPONENT_CAST and not_full: # OPPONENT_CAST
-            action_filter.append(True)
-        elif atype == Types.LEARN and inventory[player][0] >= tome_index: # LEARN
-            action_filter.append(True)
-        else:
-            action_filter.append(False)
+    new_inventories = state[:, Col.D1:Col.D4+1] + inventory[0, :4]
+    craftable = (new_inventories.min(axis=1) >= 0) & (state[:, Col.CASTABLE] == 1)
+    is_learn = state[:, Col.TYPE] == Types.LEARN
+    learnable = state[:, Col.TOME_INDEX] <= inventory[0, 0]
+    not_full = new_inventories.sum(axis=1) <= 10
+    res = np.arange(0, len(state), 1)[
+        craftable & ((~is_learn & not_full) | (is_learn & learnable))
+    ]
+    # for _, atype, d0, d1, d2, d3, _, tome_index, tax, castable, _ in state:
+    #     new_inventory = np.array([d0, d1, d2, d3]) + inventory[player][:4]
+    #     craftable = new_inventory.min() >= 0
+    #     not_full = new_inventory.sum() <= 10
+    #     if atype == Types.REST:
+    #         action_filter.append(True)
+    #     elif craftable and atype == Types.BREW:  # BREW
+    #         action_filter.append(True)
+    #     elif craftable and castable and player == 0 and atype == Types.CAST and not_full: # CAST
+    #         action_filter.append(True)
+    #     elif craftable and castable and player == 1 and atype == Types.OPPONENT_CAST and not_full: # OPPONENT_CAST
+    #         action_filter.append(True)
+    #     elif craftable and atype == Types.LEARN and inventory[player][0] >= tome_index: # LEARN
+    #         action_filter.append(True)
+    #     else:
+    #         action_filter.append(False)
+    # res2 = np.arange(0, len(state), 1)[action_filter]
+    # assert res == res2
+    return res
 
-    return state[action_filter]
 
-
-def predict(user_action, other_action, state, new_inventory):
+def predict(user_action, other_action, state, inventory):
     """
 
     Args:
@@ -127,32 +129,36 @@ def predict(user_action, other_action, state, new_inventory):
     """
     new_inventory = inventory.copy()
     new_state = state.copy()
-    user_action = user_action.copy()
-    # other_action = other_action.copy()
-    state_filter = np.logical_not(state[:, 0] == user_action[0])
-    # state_filter = np.logical_not(np.isin(state[:,0], np.array([user_action[0], other_action[0]])))
-    # remove played actions
-    new_state = new_state[state_filter]
+    user_action = new_state[user_action]
+    # other_action = new_state[other_action]
+    # user_action = user_action.copy()
+    # # other_action = other_action.copy()
+    # state_filter = np.logical_not(state[:, 0] == user_action[0])
+    # # state_filter = np.logical_not(np.isin(state[:,0], np.array([user_action[0], other_action[0]])))
+    # # remove played actions
+    # new_state = new_state[state_filter]
     # brew and cast works the same way
     if (user_action[Col.TYPE] == Types.CAST) or (user_action[Col.TYPE] == Types.BREW):
         # just update the inventory and set it as not castable
         new_inventory[0] += user_action[Col.D1:Col.PRICE+1]
         # set castable to false
         user_action[Col.CASTABLE] = False
-        new_state = np.vstack([new_state, user_action])
+        # new_state = np.vstack([new_state, user_action])
     if user_action[Col.TYPE] == Types.LEARN:
         new_inventory[0, 0] += user_action[Col.TAX] - user_action[Col.TOME_INDEX]
         # change type
         user_action[Col.TYPE] = Types.CAST
         # set castable
-        user_action[Col.CASTABLE] = True
+        new_inventory[0] += user_action[Col.D1:Col.PRICE + 1]
+        user_action[Col.CASTABLE] = False
         # put it back
-        new_state = np.vstack([new_state, user_action])
+        # new_state = np.vstack([new_state, user_action])
     if user_action[Col.TYPE] == Types.REST:
         new_state[:, Col.CASTABLE] = np.where(new_state[:, Col.TYPE] == Types.CAST, 1, new_state[:, Col.TYPE])
-        new_state = np.vstack([new_state, user_action])
+        # new_state = np.vstack([new_state, user_action])
+    new_inventory[0, :4] = np.clip(new_inventory[0, :4], 0, 10)
 
-    # # do the same for opponent
+    # # # do the same for opponent
     # if (other_action[Col.TYPE] == Types.CAST) or (other_action[Col.TYPE] == Types.BREW):
     #     # just update the inventory and set it as not castable
     #     new_inventory[1] += other_action[Col.D1:Col.PRICE+1]
@@ -162,22 +168,19 @@ def predict(user_action, other_action, state, new_inventory):
     # if other_action[Col.TYPE] == Types.LEARN:
     #     new_inventory[1, 0] += other_action[Col.TAX] - other_action[Col.TOME_INDEX]
     #     # change type
-    #     other_action[Col.TYPE] = Types.OPPONENT_CAST
+    #     other_action[Col.TYPE] = Types.CAST
     #     # set castable
     #     other_action[Col.CASTABLE] = True
     #     # put it back
     #     new_state = np.vstack([new_state, other_action])
     # if other_action[Col.TYPE] == Types.REST:
-    #     new_state[:, Col.CASTABLE] = np.where(new_state[:, Col.TYPE] == Types.OPPONENT_CAST, 1, new_state[:, Col.TYPE])
+    #     new_state[:, Col.CASTABLE] = np.where(new_state[:, Col.TYPE] == Types.CAST, 1, new_state[:, Col.TYPE])
     #     new_state = np.vstack([new_state, other_action])
-    # # _, _, d0, d1, d2, d3, price, tome_index, tax, _, _ = user_action
-    # # inventory[0] += [d0 - tome_index + tax, d1, d2, d3, price]
-    # # _, _, d0, d1, d2, d3, price, tome_index, tax, _, _ = other_action
-    # # inventory[1] += [d0 - tome_index + tax, d1, d2, d3, price]
+    # new_inventory[1, :4] = np.clip(new_inventory[1, :4], 0, 10)
     return new_state, new_inventory
 
 
-max_depth = 2
+max_depth = 3
 
 
 def minmax(state, inventory, depth):
@@ -191,14 +194,15 @@ def minmax(state, inventory, depth):
 
     """
     # 1. termination criterion
-    if depth == max_depth:
+    if depth >= max_depth:
         return score_state(state, inventory, depth), None
     actions = available_actions(state, inventory, 0)
-    if np.isin(Types.BREW, actions[:, Col.TYPE]):
-        brews = actions[actions[:, Col.TYPE] == Types.BREW]
+    if np.isin(Types.BREW, state[actions, Col.TYPE]):
+        actions_values = state[actions]
+        brews = actions_values[actions_values[:, Col.TYPE] == Types.BREW]
         # score = brews[:, Col.PRICE].sum() / (depth+1) + inventory[0, -1]
-        score = score_state(state, inventory, depth)
         action = brews[np.argmax(brews[:, Col.PRICE])]
+        score = score_state(state, inventory, depth) + action[Col.PRICE]
         return score, action
     # todo: other ways to end a game
     # 2. exploration
@@ -207,13 +211,14 @@ def minmax(state, inventory, depth):
     for action_0 in actions:
         # worst_score = np.inf
         # for action_1 in available_actions(state, inventory, 1):
-        new_state, new_inventory = predict(action_0, None, state, inventory)
-        score, action = minmax(new_state, new_inventory, depth + 1)
-            # if score < worst_score:
-            #     worst_score = score
+        # new_state, new_inventory = predict(action_0, None, state, inventory)
+        # print((" "*depth) + "|"+"{} {}".format(state[action_0][0], state[action_0][1]))
+        score, _ = minmax(*predict(action_0, None, state, inventory), depth + 1)
+        # if score < worst_score:
+        #     worst_score = score
         if score > best_score:
             best_score = score
-            best_action = action_0
+            best_action = state[action_0]
     return best_score, best_action
 
 
@@ -232,12 +237,23 @@ while True:
         ] +
         [[-1, Types.REST, 0,0,0,0, 0,0,0,True,True]]
     )
+    state = state[state[:, Col.TYPE] != Types.OPPONENT_CAST]
+    state[:, Col.CASTABLE] += np.logical_or(state[:, Col.TYPE] == Types.BREW, state[:, Col.TYPE] == Types.LEARN)
+    state[0, Col.PRICE] += 3
+    state[1, Col.PRICE] += 1
     inventory = np.array([[int(j) for j in input().split()] for i in range(2)])
-    t1 = time.thread_time()
+    inventory = inventory[:1]
+    actions = available_actions(state, inventory, 0)
+    max_depth = 2 if len(actions) > 5 else 3
+    # r = 0
+    # for i in range(10):
+    #     t1 = time.thread_time()
+    #     score, action = minmax(state, inventory, 0)
+    #     t2 = time.thread_time()
+    #     r += t2 - t1
+    # print(f'execution took : {r/10} s', file=sys.stderr)
     score, action = minmax(state, inventory, 0)
-    t2 = time.thread_time()
-    print(f'execution took : {t2-t1} s', file=sys.stderr)
-    print(f'{inv_types[action[1]]} {action[0]} {score}')
+    print(f'{inv_types[action[1]]} {action[0]}')
 
 while True:
     print(input(), file=sys.stderr)
