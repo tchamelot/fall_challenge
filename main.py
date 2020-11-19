@@ -40,8 +40,8 @@ action_parsers = [
     int,
     int,
     int,
-    int,
-    int,
+    lambda x: max(0, int(x)),
+    lambda x: max(0, int(x)),
     lambda x: x != "0",
     lambda x: x != "0",
 ]
@@ -58,7 +58,7 @@ def score_state(state, inventory):
     """
     return (
         np.clip(
-            state[state[:, Col.TYPE] == Types.BREW, Col.D1 : Col.D4 + 1] + inventory[:-1],
+            state[state[:, Col.TYPE] == Types.BREW, 2:6] + inventory[:-1],
             None,
             0,
         )
@@ -77,15 +77,15 @@ def available_actions(state, inventory):
     Returns: the list of available action, as a subset of state
 
     """
-    new_inventories = state[:, Col.D1 : Col.D4 + 1] + inventory[:4]
+    new_inventories = state[:, 2:6] + inventory[:4]
     craftable = (new_inventories.min(axis=1) >= 0) & (state[:, Col.CASTABLE] == 1)
     is_learn = state[:, Col.TYPE] == Types.LEARN
     learnable = (
         state[:, Col.TOME_INDEX] <= inventory[0]
-    )  # & ((state[:, Col.TYPE] == Types.CAST).sum() < 10)
+    ) & (state[:, Col.TAX] + inventory[:4].sum() <= 10)
     not_full = new_inventories.sum(axis=1) <= 10
     return np.arange(0, len(state), 1)[
-        craftable & ((~is_learn & not_full) | (is_learn & learnable))
+        ((~is_learn & craftable & not_full) | (is_learn & learnable))
     ]
 
 
@@ -106,22 +106,45 @@ def predict(user_action, state, inventory):
     if (action_type == Types.CAST) or (
             action_type == Types.BREW
     ):
+        stua = new_state[user_action]
         # just update the inventory and set it as not castable
-        new_inventory += new_state[user_action, Col.D1 : Col.PRICE + 1]
+        new_inventory += stua[Col.D1 : Col.PRICE + 1]
         # set castable to false
         new_state[user_action, Col.CASTABLE] = False
+        ninv = new_inventory + stua[Col.D1: Col.PRICE + 1]
+        if stua[Col.REPEATABLE] and (ninv >= 0).all() and (ninv[:-1].sum() < 10):
+            new_inventory = ninv
+            # remove tax and set not castable
+            new_state[user_action, -1] = 2
     elif action_type == Types.LEARN:
         new_inventory[0] += (
             new_state[user_action, Col.TAX] - new_state[user_action, Col.TOME_INDEX]
         )
         new_state[:user_action, Col.TAX] += new_state[:user_action, Col.TYPE] == Types.LEARN
-        # change type
-        new_state[user_action, Col.TYPE] = Types.CAST
-        # set castable
-        new_inventory += new_state[user_action, Col.D1 : Col.PRICE + 1]
-        new_inventory[0] += new_state[user_action, Col.TAX]
-        new_state[user_action, Col.TAX:-1] = 0
-        # put it back
+        # apply learned
+        stua = new_state[user_action]
+        hyp_inv = new_inventory + stua[Col.D1: Col.PRICE+1]
+        if (hyp_inv >= 0).all():
+            new_inventory = hyp_inv
+            # earn tax
+            new_inventory[0] += stua[Col.TAX]
+            # change type
+            new_state[user_action, Col.TYPE] = Types.CAST
+            # remove tax and set not castable
+            new_state[user_action, Col.TAX:-1] = 0
+            hyp_inv = new_inventory + stua[Col.D1: Col.PRICE + 1]
+            if stua[Col.REPEATABLE] and (hyp_inv >= 0).all():
+                new_inventory = hyp_inv
+                # remove tax and set not castable
+                new_state[user_action, -1] = 2
+        else:
+            # earn tax
+            new_inventory[0] += stua[Col.TAX]
+            # change type
+            new_state[user_action, Col.TYPE] = Types.CAST
+            # set castable
+            new_state[user_action, Col.TAX] = 0
+            new_state[user_action, Col.CASTABLE] = 1
     elif action_type == Types.REST:
         # new_state[:, Col.CASTABLE] = np.where(new_state[:, Col.TYPE] == Types.CAST, 1, new_state[:, Col.TYPE])
         new_state[:, Col.CASTABLE] = True
@@ -129,7 +152,7 @@ def predict(user_action, state, inventory):
     return new_state, new_inventory
 
 
-def minmax(state, inventory, depth):
+def minmax(state, inventory, depth, t0):
     """
     Args:
         state: state of the game, both players
@@ -159,47 +182,54 @@ def minmax(state, inventory, depth):
         if score > best_score:
             best_score = score
             best_action = state[action_0]
+            best_action[-1] = new_state[action_0][-1]
+        if time.time() - t0 > 0.0475:
+            print("42 is coming", file=sys.stderr)
+            return best_score, best_action
     return best_score, best_action
 
 
 def parse_inputs():
     global state, inventory
     action_count = int(input())  # the number of spells and recipes in play
-    state = np.vstack(
-        [
-            [parser(inp) for parser, inp in zip(action_parsers, input().split())]
-            for _ in range(action_count)
-        ]
-        + [[-1, Types.REST, 0, 0, 0, 0, 0, 0, 0, True, True]]
+    state = np.array(
+        sorted(
+            filter(  # drop opponent actions
+                lambda x: x[1] != Types.OPPONENT_CAST,
+                [
+                    [parser(inp) for parser, inp in zip(action_parsers, input().split())]
+                    for _ in range(action_count)
+                ]
+                + [[-1, Types.REST, 0, 0, 0, 0, 0, 0, 0, True, True]]  # adds a row for the rest action
+            ),
+            key=lambda x: x[Col.TYPE]
+        )
     )
-    state = state[state[:, Col.TYPE] != Types.OPPONENT_CAST]
-    state[:, Col.CASTABLE] += np.logical_or(
+    state[:, Col.CASTABLE] += np.logical_or(  # set learn and brew as castable to simplify available_action
         state[:, Col.TYPE] == Types.BREW, state[:, Col.TYPE] == Types.LEARN
     )
-    state[0, Col.PRICE] += 3
-    state[1, Col.PRICE] += 1
+    state[0, Col.PRICE] += 3 * (state[0, Col.TAX] > 0)  # account first order bonus
+    state[1, Col.PRICE] += 1 * (state[1, Col.TAX] > 0) # account second order bonus
     inventory = np.array([[int(j) for j in input().split()] for i in range(2)])
-    inventory = inventory[0]
+    inventory = inventory[0]  # drop opponent inventory
     return state, inventory
 
 
 def trace_execution():
-    import time
-    n = 50
+    n = 100
     r = 0
-    for i in range(n):
-        t1 = time.thread_time()
-        score, action = minmax(state, inventory, 0)
-        t2 = time.thread_time()
-        r += t2 - t1
-    print(f"execution took : {r / n} s")
     from line_profiler import LineProfiler
     lp = LineProfiler()
     lp.add_function(predict)
     lp.add_function(available_actions)
     lp.add_function(score_state)
     wrapper = lp(minmax)
-    wrapper(state, inventory, 0)
+    for i in range(n):
+        t1 = time.thread_time()
+        wrapper(state, inventory, 0, time.time())
+        t2 = time.thread_time()
+        r += t2 - t1
+    print(f"execution took : {r / n} s")
     lp.print_stats()
     lp.dump_stats("main.py.lprof")
     exit(0)
@@ -208,20 +238,21 @@ def trace_execution():
 if __name__ == '__main__':
     # game loop
     dump_input_at = -1  # if other than -1, stop game at step i and print the input values
-    profile = True
+    profile = False
     step = 0
     while step != dump_input_at:
         step += 1
+        t0 = time.time()
         state, inventory = parse_inputs()
         actions = available_actions(state, inventory)
         max_depth = 2 if len(actions) > 5 else 3
-        score, action = minmax(state, inventory, 0)
+        score, action = minmax(state, inventory, 0, t0)
         # if action is None:
         #     print("trigger None", file=sys.stderr)
         #     max_depth = 1
-        #     score, action = minmax(state, inventory, 0)
+        #     score, action = minmax(state, inventory, 0, t0+0.002)
         # print(score, file=sys.stderr)
-        print(f"{inv_types[action[1]]} {action[0]}")
+        print(f"{inv_types[action[1]]} {action[0]} {max(1, action[-1])}")
         if profile:
             trace_execution()
 
