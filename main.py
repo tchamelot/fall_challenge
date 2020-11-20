@@ -1,6 +1,35 @@
 import sys
 import numpy as np
 from enum import IntEnum
+import time
+
+
+def flushable_memoize_2(memo):
+    def memoize_2(f):
+        def helper(*inputs):
+            key = inputs[0].tostring(), inputs[1].tostring() #+ inputs[2].tostring()
+            if key not in memo:
+                res = f(*inputs)
+                memo[key] = res
+                return res
+            return memo[key]
+
+        return helper
+    return memoize_2
+
+
+def flushable_memoize_3(memo):
+    def memoize_3(f):
+        def helper(*inputs):
+            key = inputs[0].tostring(), inputs[1].tostring(), inputs[2].tostring()
+            if key not in memo:
+                res = f(*inputs)
+                memo[key] = res
+                return res
+            return memo[key]
+
+        return helper
+    return memoize_3
 
 
 # enum for types
@@ -46,7 +75,10 @@ action_parsers = [
     lambda x: x != "0",
 ]
 
+score_state_memo = dict()
 
+
+@flushable_memoize_2(score_state_memo)
 def score_state(state, inventory):
     """
     Args:
@@ -64,10 +96,14 @@ def score_state(state, inventory):
         )
         .sum(axis=1)
         .min()
-        + inventory[-1]
+        + 3 * inventory[-1]
     )
 
 
+available_actions_memo = dict()
+
+
+@flushable_memoize_2(available_actions_memo)
 def available_actions(state, inventory):
     """
     Args:
@@ -89,6 +125,10 @@ def available_actions(state, inventory):
     ]
 
 
+predict_memo = dict()
+
+
+@flushable_memoize_3(predict_memo)
 def predict(user_action, state, inventory):
     """
 
@@ -152,7 +192,7 @@ def predict(user_action, state, inventory):
     return new_state, new_inventory
 
 
-def minmax(state, inventory, depth, t0):
+def minmax(state, inventory, depth, max_depth, t0):
     """
     Args:
         state: state of the game, both players
@@ -166,26 +206,26 @@ def minmax(state, inventory, depth, t0):
     if depth >= max_depth:
         return score_state(state, inventory), None
     actions = available_actions(state, inventory)
-    if (state[actions, Col.TYPE] == Types.BREW).any():
-        actions_values = state[actions]
-        brews = actions_values[actions_values[:, Col.TYPE] == Types.BREW]
-        # score = brews[:, Col.PRICE].sum() / (depth+1) + inventory[0, -1]
-        action = brews[np.argmax(brews[:, Col.PRICE])]
-        score = score_state(state, inventory) + 3 * action[Col.PRICE]
-        return score, action
+    # if (state[actions, Col.TYPE] == Types.BREW).any():
+    #     actions_values = state[actions]
+    #     brews = actions_values[actions_values[:, Col.TYPE] == Types.BREW]
+    #     # score = brews[:, Col.PRICE].sum() / (depth+1) + inventory[0, -1]
+    #     action = brews[np.argmax(brews[:, Col.PRICE])]
+    #     score = score_state(state, inventory) + 3 * action[Col.PRICE]
+    #     return score, action
     # 2. exploration
     best_score = -np.inf
     best_action = None
     for action_0 in actions:
         new_state, new_inventory = predict(action_0, state, inventory)
-        score, _ = minmax(new_state, new_inventory, depth + 1)
+        score, _ = minmax(new_state, new_inventory, depth + 1, max_depth, t0)
         if score > best_score:
             best_score = score
             best_action = state[action_0]
             best_action[-1] = new_state[action_0][-1]
-        if time.time() - t0 > 0.0475:
+        if time.time() - t0 > 0.0497:
             print("42 is coming", file=sys.stderr)
-            return best_score, best_action
+            return -np.inf, best_action
     return best_score, best_action
 
 
@@ -226,7 +266,7 @@ def trace_execution():
     wrapper = lp(minmax)
     for i in range(n):
         t1 = time.thread_time()
-        wrapper(state, inventory, 0, time.time())
+        wrapper(state, inventory, 0, max_depth, time.time())
         t2 = time.thread_time()
         r += t2 - t1
     print(f"execution took : {r / n} s")
@@ -242,17 +282,32 @@ if __name__ == '__main__':
     step = 0
     while step != dump_input_at:
         step += 1
-        t0 = time.time()
         state, inventory = parse_inputs()
+        t0 = time.time()
         actions = available_actions(state, inventory)
-        max_depth = 2 if len(actions) > 5 else 3
-        score, action = minmax(state, inventory, 0, t0)
+        max_depth = 1
+        best_action = None
+        while time.time() - t0 < 0.045:
+            score, action = minmax(state, inventory, 0, max_depth, t0)
+            if score != -np.inf:
+                best_action = action
+            print(f"depth: {max_depth}, time: {time.time() - t0}", file=sys.stderr)
+            max_depth += 1
         # if action is None:
         #     print("trigger None", file=sys.stderr)
         #     max_depth = 1
         #     score, action = minmax(state, inventory, 0, t0+0.002)
-        # print(score, file=sys.stderr)
-        print(f"{inv_types[action[1]]} {action[0]} {max(1, action[-1])}")
+        # print(f"inventory: {len(state)} elements", file=sys.stderr)
+        # print(f"nb actions: {len(actions)}", file=sys.stderr)
+        # print(f"test: {len(actions)+len(state)}", file=sys.stderr)
+        # print(f"depth: {max_depth}", file=sys.stderr)
+        print(f"execution time: {(time.time() - t0)*1000}ms", file=sys.stderr)
+        print(f"{inv_types[best_action[1]]} {best_action[0]} {max(1, best_action[-1])}")
+        if step % 5 == 0:
+            predict_memo.clear()
+            available_actions_memo.clear()
+            score_state_memo.clear()
+
         if profile:
             trace_execution()
 
