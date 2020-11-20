@@ -6,10 +6,10 @@ import time
 
 def flushable_memoize_2(memo):
     def memoize_2(f):
-        def helper(*inputs):
-            key = inputs[0].tostring(), inputs[1].tostring() #+ inputs[2].tostring()
+        def helper(state, inventory):
+            key = state.tobytes(), inventory.tobytes() #+ inputs[2].tostring()
             if key not in memo:
-                res = f(*inputs)
+                res = f(state, inventory)
                 memo[key] = res
                 return res
             return memo[key]
@@ -20,10 +20,10 @@ def flushable_memoize_2(memo):
 
 def flushable_memoize_3(memo):
     def memoize_3(f):
-        def helper(*inputs):
-            key = inputs[0].tostring(), inputs[1].tostring(), inputs[2].tostring()
+        def helper(user_action, state, inventory):
+            key = user_action.tobytes(), state.tobytes(), inventory.tobytes()
             if key not in memo:
-                res = f(*inputs)
+                res = f(user_action, state, inventory)
                 memo[key] = res
                 return res
             return memo[key]
@@ -76,6 +76,7 @@ action_parsers = [
 ]
 
 score_state_memo = dict()
+weights = np.array([1, 2, 2, 2])
 
 
 @flushable_memoize_2(score_state_memo)
@@ -88,15 +89,16 @@ def score_state(state, inventory):
     Returns: the score describing the "goodness" of a state
 
     """
+    undone_brews = (state[:, Col.TYPE] == Types.BREW) & state[:, Col.CASTABLE]
     return (
         np.clip(
-            state[state[:, Col.TYPE] == Types.BREW, 2:6] + inventory[:-1],
+            state[undone_brews, 2:6] + inventory[:-1],
             None,
             0,
         )
         .sum(axis=1)
-        .min()
-        + 3 * inventory[-1]
+        .max()
+        + 5 * ((inventory[-1] - opponent_score) + last_brew * inventory[1:-1].sum())
     )
 
 
@@ -203,8 +205,9 @@ def minmax(state, inventory, depth, max_depth, t0):
 
     """
     # 1. termination criterion
+    current_score = score_state(state, inventory)
     if depth >= max_depth:
-        return score_state(state, inventory), None
+        return current_score, None
     actions = available_actions(state, inventory)
     # if (state[actions, Col.TYPE] == Types.BREW).any():
     #     actions_values = state[actions]
@@ -223,14 +226,13 @@ def minmax(state, inventory, depth, max_depth, t0):
             best_score = score
             best_action = state[action_0]
             best_action[-1] = new_state[action_0][-1]
-        if time.time() - t0 > 0.0497:
-            print("42 is coming", file=sys.stderr)
+        if time.time() - t0 > 0.049:
+            # print("42 is coming", file=sys.stderr)
             return -np.inf, best_action
-    return best_score, best_action
+    return 0.9 * best_score + 0.1 * current_score, best_action
 
 
 def parse_inputs():
-    global state, inventory
     action_count = int(input())  # the number of spells and recipes in play
     state = np.array(
         sorted(
@@ -251,6 +253,9 @@ def parse_inputs():
     state[0, Col.PRICE] += 3 * (state[0, Col.TAX] > 0)  # account first order bonus
     state[1, Col.PRICE] += 1 * (state[1, Col.TAX] > 0) # account second order bonus
     inventory = np.array([[int(j) for j in input().split()] for i in range(2)])
+    # if opponent_score is not None and opponent_score != inventory[1, -1]:
+    #     opponent_brews += 1
+    # opponent_score = inventory[1, -1]
     inventory = inventory[0]  # drop opponent inventory
     return state, inventory
 
@@ -280,36 +285,35 @@ if __name__ == '__main__':
     dump_input_at = -1  # if other than -1, stop game at step i and print the input values
     profile = False
     step = 0
-    while step != dump_input_at:
-        step += 1
+    last_brew = False
+    nb_brews = 0
+    # opponent_brews = 0
+    opponent_score = 0
+    while True:  # step != dump_input_at:
+        # step += 1
         state, inventory = parse_inputs()
         t0 = time.time()
         actions = available_actions(state, inventory)
         max_depth = 1
         best_action = None
-        while time.time() - t0 < 0.045:
+        while (time.time() - t0) < 0.04:
             score, action = minmax(state, inventory, 0, max_depth, t0)
             if score != -np.inf:
                 best_action = action
-            print(f"depth: {max_depth}, time: {time.time() - t0}", file=sys.stderr)
+            # print(f"depth: {max_depth}, time: {time.time() - t0}", file=sys.stderr)
             max_depth += 1
-        # if action is None:
-        #     print("trigger None", file=sys.stderr)
-        #     max_depth = 1
-        #     score, action = minmax(state, inventory, 0, t0+0.002)
-        # print(f"inventory: {len(state)} elements", file=sys.stderr)
-        # print(f"nb actions: {len(actions)}", file=sys.stderr)
-        # print(f"test: {len(actions)+len(state)}", file=sys.stderr)
-        # print(f"depth: {max_depth}", file=sys.stderr)
-        print(f"execution time: {(time.time() - t0)*1000}ms", file=sys.stderr)
+        # print(f"execution time: {(time.time() - t0)*1000}ms", file=sys.stderr)
         print(f"{inv_types[best_action[1]]} {best_action[0]} {max(1, best_action[-1])}")
-        if step % 5 == 0:
-            predict_memo.clear()
-            available_actions_memo.clear()
-            score_state_memo.clear()
+        if best_action[1] == 0:
+            nb_brews += 1
+        last_brew = nb_brews == 5  # or (opponent_brews == 5)
+        # if (step % 2) and (time.time() - t0 < 0.42):
+        #     predict_memo.clear()
+        #     available_actions_memo.clear()
+        #     score_state_memo.clear()
 
-        if profile:
-            trace_execution()
+        # if profile:
+        #     trace_execution()
 
     while True:
         print(input(), file=sys.stderr)
