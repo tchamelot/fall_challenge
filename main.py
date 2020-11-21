@@ -7,7 +7,7 @@ import time
 def flushable_memoize_2(memo):
     def memoize_2(f):
         def helper(state, inventory):
-            key = hash(state.tobytes()), hash(inventory.tobytes()) #+ inputs[2].tostring()
+            key = hash(state.tobytes()), hash(inventory.tobytes())
             if key not in memo:
                 res = f(state, inventory)
                 memo[key] = res
@@ -31,6 +31,19 @@ def flushable_memoize_3(memo):
         return helper
     return memoize_3
 
+
+def flushable_memoize_4(memo):
+    def memoize_3(f):
+        def helper(state, inventory, depth, max_depth, t0):
+            key = hash(state.tobytes()), hash(inventory.tobytes()), depth, max_depth
+            if key not in memo:
+                res = f(state, inventory, depth, max_depth, t0)
+                memo[key] = res
+                return res
+            return memo[key]
+
+        return helper
+    return memoize_3
 
 # enum for types
 class Types(IntEnum):
@@ -76,7 +89,7 @@ action_parsers = [
 ]
 
 score_state_memo = dict()
-weights = np.array([1, 2, 2, 2])
+weights = np.array([0.5, 1.1, 1.1, 1.1])
 
 
 @flushable_memoize_2(score_state_memo)
@@ -89,16 +102,16 @@ def score_state(state, inventory):
     Returns: the score describing the "goodness" of a state
 
     """
-    undone_brews = (state[:, Col.TYPE] == Types.BREW) & state[:, Col.CASTABLE]
-    return (
+    castable_brews = (state[:, Col.TYPE] == Types.BREW) & state[:, Col.CASTABLE]
+    return (((
         np.clip(
-            state[undone_brews, 2:6] + inventory[:-1],
+            state[castable_brews, 2:6] + inventory[:-1],
             None,
             0,
-        )
-        .sum(axis=1)
+        ) * weights)
+        .sum(axis=1) * state[castable_brews, Col.PRICE])
         .mean()
-        + 5 * ((inventory[-1] - opponent_score) + last_brew * inventory[1:-1].sum())
+        + 10 * ((inventory[-1] - opponent_score) + last_brew * inventory[1:-1].sum())
     )
 
 
@@ -148,40 +161,41 @@ def predict(user_action, state, inventory):
     if (action_type == Types.CAST) or (
             action_type == Types.BREW
     ):
-        stua = new_state[user_action]
         # just update the inventory and set it as not castable
-        new_inventory += stua[Col.D1 : Col.PRICE + 1]
+        new_inventory += new_state[user_action, Col.D1 : Col.PRICE + 1]
         # set castable to false
-        new_state[user_action, Col.CASTABLE] = False
-        ninv = new_inventory + stua[Col.D1: Col.PRICE + 1]
-        if stua[Col.REPEATABLE] and (ninv >= 0).all() and (ninv[:-1].sum() < 10):
+        new_state[user_action, Col.CASTABLE] = new_state[user_action, Col.REPEATABLE]
+        ninv = new_inventory + new_state[user_action, Col.D1: Col.PRICE + 1]
+        if new_state[user_action, Col.REPEATABLE] and (ninv >= 0).all() and (ninv[:-1].sum() < 10):
             new_inventory = ninv
             # remove tax and set not castable
             new_state[user_action, -1] = 2
+        else:
+            new_state[user_action, Col.CASTABLE] = False  # new_state[user_action, Col.REPEATABLE]
     elif action_type == Types.LEARN:
         new_inventory[0] += (
             new_state[user_action, Col.TAX] - new_state[user_action, Col.TOME_INDEX]
         )
         new_state[:user_action, Col.TAX] += new_state[:user_action, Col.TYPE] == Types.LEARN
         # apply learned
-        stua = new_state[user_action]
-        hyp_inv = new_inventory + stua[Col.D1: Col.PRICE+1]
+        hyp_inv = new_inventory + new_state[user_action, Col.D1: Col.PRICE+1]
         if (hyp_inv >= 0).all():
             new_inventory = hyp_inv
             # earn tax
-            new_inventory[0] += stua[Col.TAX]
+            new_inventory[0] += new_state[user_action, Col.TAX]
             # change type
             new_state[user_action, Col.TYPE] = Types.CAST
             # remove tax and set not castable
-            new_state[user_action, Col.TAX:-1] = 0
-            hyp_inv = new_inventory + stua[Col.D1: Col.PRICE + 1]
-            if stua[Col.REPEATABLE] and (hyp_inv >= 0).all():
+            new_state[user_action, Col.TAX] = 0
+            new_state[user_action, Col.CASTABLE] = 1
+            hyp_inv = new_inventory + new_state[user_action, Col.D1: Col.PRICE + 1]
+            if new_state[user_action, Col.REPEATABLE] and (hyp_inv >= 0).all():
                 new_inventory = hyp_inv
                 # remove tax and set not castable
                 new_state[user_action, -1] = 2
         else:
             # earn tax
-            new_inventory[0] += stua[Col.TAX]
+            new_inventory[0] += new_state[user_action, Col.TAX]
             # change type
             new_state[user_action, Col.TYPE] = Types.CAST
             # set castable
@@ -194,6 +208,10 @@ def predict(user_action, state, inventory):
     return new_state, new_inventory
 
 
+minmax_memo = dict()
+
+
+@flushable_memoize_4(minmax_memo)
 def minmax(state, inventory, depth, max_depth, t0):
     """
     Args:
@@ -205,6 +223,7 @@ def minmax(state, inventory, depth, max_depth, t0):
 
     """
     # 1. termination criterion
+    if time.time() - t0 > 0.049: return -np.inf, None
     current_score = score_state(state, inventory)
     if depth >= max_depth:
         return current_score, None
@@ -213,49 +232,17 @@ def minmax(state, inventory, depth, max_depth, t0):
     best_score = -np.inf
     best_action = None
     for action_0 in actions:
+        if time.time() - t0 > 0.0485: return -np.inf, None
         new_state, new_inventory = predict(action_0, state, inventory)
-        if time.time() - t0 > 0.0489:
-            # print("42 is coming", file=sys.stderr)
-            return -np.inf, best_action
-        score, _ = minmax(new_state, new_inventory, depth + 1, max_depth, t0)
-        if score > best_score:
+        score, next_best_action = minmax(new_state, new_inventory, depth + 1, max_depth, t0)
+        if score is not None and score > best_score:
+            if time.time() - t0 > 0.0485: return -np.inf, None
             best_score = score
-            best_action = state[action_0]
-            best_action[-1] = new_state[action_0][-1]
+            best_action = state[action_0].copy()
+            best_action[-1] = new_state[action_0, -1]
+            if next_best_action is not None and best_action[0] and best_action[0] == next_best_action[0]:
+                best_action[-1] += next_best_action[-1]
     return 0.95 * best_score + 0.05 * current_score, best_action
-
-
-# def op_minmax(state, inventory, depth, max_depth, t0):
-#     """
-#     Args:
-#         state: state of the game, both players
-#         inventory: inventory, both players
-#         depth: the depth of the recusion used in the algorithm
-#
-#     Returns: the best (long term) score and the immediate action that lead to this score.
-#
-#     """
-#     global opponent_score
-#     # 1. termination criterion
-#     actions = available_actions(state, inventory[0])
-#     op_actions = available_actions(state, inventory[1])
-#     if len(op_actions) > 0:
-#         op_action_index = np.argmax(state[:, Col.PRICE][op_actions])
-#         state, new_op_inventory = predict(op_action_index, state, inventory[1])
-#         opponent_score = new_op_inventory[-1]
-#     inventory = inventory[0]
-#     current_score = score_state(state, inventory)
-#     # 2. exploration
-#     best_score = -np.inf
-#     best_action = None
-#     for action_0 in actions:
-#         new_state, new_inventory = predict(action_0, state, inventory)
-#         score, _ = minmax(new_state, new_inventory, depth + 1, max_depth, t0)
-#         if score > best_score:
-#             best_score = score
-#             best_action = state[action_0]
-#             best_action[-1] = new_state[action_0][-1]
-#     return 0.95 * best_score + 0.05 * current_score, best_action
 
 
 def trace_execution():
@@ -287,10 +274,11 @@ if __name__ == '__main__':
     nb_brews = 0
     opponent_brews = 0
     opponent_score = 0
-    # opponent_inv_sum = 0
+    opponent_inv_sum = 0
     while True:  # step != dump_input_at:
-        # step += 1
+        step += 1
         action_count = int(input())  # the number of spells and recipes in play
+        t0 = time.time()
         state = np.array(
             list(
                 filter(  # drop opponent actions
@@ -301,7 +289,8 @@ if __name__ == '__main__':
                     )
                 ),
                 # key=lambda x: x[Col.TYPE]
-            ) + [[-1, Types.REST, 0, 0, 0, 0, 0, 0, 0, True, False]]  # adds a row for the rest action
+            ) + [[-1, Types.REST, 0, 0, 0, 0, 0, 0, 0, True, False]],  # adds a row for the rest action
+
         )
         state[:, Col.CASTABLE] += np.logical_or(  # set learn and brew as castable to simplify available_action
             state[:, Col.TYPE] == Types.BREW, state[:, Col.TYPE] == Types.LEARN
@@ -310,33 +299,31 @@ if __name__ == '__main__':
         state[1, Col.PRICE] += 1 * (state[1, Col.TAX] > 0)  # account second order bonus
         inventory = np.array([[int(j) for j in input().split()] for i in range(2)])
 
-        t0 = time.time()
-
-        if opponent_score is not None and opponent_score != inventory[1, -1]:
+        if opponent_score != inventory[1, -1]:
             opponent_brews += 1
         opponent_score = inventory[1, -1]
         # if last_brew:
         #     opponent_inv_sum = inventory[1, 1:-1].sum()
-        # else:
-        #     opponent_inv_sum = 0
         inventory = inventory[0]  # drop opponent inventory
         max_depth = 1
         best_action = None
+        best_score = -np.inf
         while (time.time() - t0) < 0.035:
             score, action = minmax(state, inventory, 0, max_depth, t0)
-            if score != -np.inf:
+            if score >= best_score and action is not None:
                 best_action = action
-            print(f"depth: {max_depth}, time: {time.time() - t0}", file=sys.stderr)
+            print(f"depth: {max_depth}, time: {time.time() - t0}, score: {score}, action:{best_action[0]}", file=sys.stderr)
             max_depth += 1
         # print(f"execution time: {(time.time() - t0)*1000}ms", file=sys.stderr)
         print(f"{inv_types[best_action[1]]} {best_action[0]} {max(1, best_action[-1])}")
         if best_action[1] == 0:
             nb_brews += 1
             last_brew = (nb_brews == 5) or (opponent_brews == 5)
-        # if (step % 2) and (time.time() - t0 < 0.42):
-        #     predict_memo.clear()
-        #     available_actions_memo.clear()
-        #     score_state_memo.clear()
+        if (time.time() - t0) < 0.040:
+            predict_memo.clear()
+            available_actions_memo.clear()
+            score_state_memo.clear()
+            minmax_memo.clear()
 
         # if profile:
         #     trace_execution()
