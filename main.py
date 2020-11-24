@@ -89,7 +89,7 @@ action_parsers = [
 ]
 
 score_state_memo = dict()
-weights = np.array([0.5, 1.0, 1.01, 1.02])
+weights = np.array([0.5, 1, 1, 1])
 
 
 @flushable_memoize_2(score_state_memo)
@@ -103,19 +103,19 @@ def score_state(state, inventory):
 
     """
     castable_brews = (state[:, Col.TYPE] == Types.BREW) & state[:, Col.CASTABLE]
-    inventory_score = (((
+    inventory_score = ((#(
         np.clip(
             state[castable_brews, 2:6] + inventory[:-1],
             None,
             0,
         ) * weights)
-        .sum(axis=1) * state[castable_brews, Col.PRICE])
+        .sum(axis=1) #* state[castable_brews, Col.PRICE])
         .mean()
     )
     if last_brew:
         money_score = inventory[-1] + inventory[1:-1].sum()
     else:
-        money_score = inventory[-1]
+        money_score = inventory[-1] # - (inventory[:-1].sum() >= 9)
     return inventory_score + 15 * money_score
 
 
@@ -133,12 +133,12 @@ def available_actions(state, inventory):
 
     """
     new_inventories = state[:, 2:6] + inventory[:4]
-    craftable = (new_inventories.min(axis=1) >= 0) & (state[:, Col.CASTABLE] == 1)
+    craftable = (new_inventories >= 0).all(axis=1) & (state[:, Col.CASTABLE] == 1)
     is_learn = state[:, Col.TYPE] == Types.LEARN
     learnable = (
         state[:, Col.TOME_INDEX] <= inventory[0]
-    ) & (state[:, Col.TAX] + inventory[:4].sum() < 10)
-    not_full = new_inventories.sum(axis=1) < 10
+    ) & (state[:, Col.TAX] + inventory[:4].sum() <= 10)
+    not_full = new_inventories.sum(axis=1) <= 10
     return np.arange(0, len(state), 1)[
         ((~is_learn & craftable & not_full) | (is_learn & learnable))
     ]
@@ -170,7 +170,7 @@ def predict(user_action, state, inventory):
         # set castable to false
         # new_state[user_action, Col.CASTABLE] = False #new_state[user_action, Col.REPEATABLE]
         ninv = new_inventory + new_state[user_action, Col.D1: Col.PRICE + 1]
-        if new_state[user_action, Col.REPEATABLE] and (ninv >= 0).all() and (ninv[:-1].sum() < 10):
+        if new_state[user_action, Col.REPEATABLE] and (ninv >= 0).all() and (ninv[:-1].sum() <= 10):
             new_inventory = ninv
             # remove tax and set not castable
             new_state[user_action, -1] = 2
@@ -192,7 +192,7 @@ def predict(user_action, state, inventory):
             new_state[user_action, Col.TAX] = 0
             new_state[user_action, Col.CASTABLE] = 1
             hyp_inv = new_inventory + new_state[user_action, Col.D1: Col.PRICE + 1]
-            if new_state[user_action, Col.REPEATABLE] and (hyp_inv >= 0).all() and (hyp_inv[:-1].sum() < 10):
+            if new_state[user_action, Col.REPEATABLE] and (hyp_inv >= 0).all() and (hyp_inv[:-1].sum() <= 10):
                 new_inventory = hyp_inv
                 # remove tax and set not castable
                 new_state[user_action, -1] = 2
@@ -226,26 +226,31 @@ def minmax(state, inventory, depth, max_depth, t0):
 
     """
     # 1. termination criterion
-    current_score = score_state(state, inventory)
     if depth >= max_depth:
-        return current_score, None
+        return score_state(state, inventory), None
     if time.time() - t0 > 0.0498: return -np.inf, None
     actions = available_actions(state, inventory)
     # 2. exploration
     best_score = -np.inf
     best_action = None
+    score_list = []
     for action_0 in actions:
-        if time.time() - t0 > 0.0498: return -np.inf, None
+        if time.time() - t0 > 0.0495: return -np.inf, None
         new_state, new_inventory = predict(action_0, state, inventory)
         score, next_best_action = minmax(new_state, new_inventory, depth + 1, max_depth, t0)
+        score_list.append(score)
         if score > best_score:
-            if time.time() - t0 > 0.0498: return -np.inf, None
+            if time.time() - t0 > 0.0495: return -np.inf, None
             best_action = state[action_0].copy()
-            best_score = score + best_action[Col.PRICE]/2 if best_action[Col.TYPE] == Types.BREW else score
+            best_score = score #+ best_action[Col.PRICE] / 2 if best_action[Col.TYPE] == Types.BREW else score
             best_action[-1] = new_state[action_0, -1]
             if next_best_action is not None and best_action[0] and best_action[0] == next_best_action[0]:
                 best_action[-1] += next_best_action[-1]
-    return 0.85 * best_score + 0.15 * current_score, best_action
+    if len(score_list) > 0 and time.time() - t0 < 0.0495:
+        median_score = np.median(score_list)
+        if np.isfinite(median_score):
+            return 0.9 * best_score + 0.1 * median_score, best_action
+    return best_score, best_action
 
 
 def trace_execution():
@@ -277,7 +282,7 @@ if __name__ == '__main__':
     nb_brews = 0
     opponent_brews = 0
     opponent_score = 0
-    opponent_inv_sum = 0
+    # opponent_inv_sum = 0
     while True:  # step != dump_input_at:
         step += 1
         action_count = int(input())  # the number of spells and recipes in play
@@ -306,6 +311,8 @@ if __name__ == '__main__':
         if opponent_score != inventory[1, -1]:
             opponent_brews += 1
         opponent_score = inventory[1, -1]
+        last_brew = (nb_brews == 5) or (opponent_brews == 5)
+
         # if last_brew:
         #     opponent_inv_sum = inventory[1, 1:-1].sum()
         inventory = inventory[0]  # drop opponent inventory
@@ -329,7 +336,6 @@ if __name__ == '__main__':
         print(f"{inv_types[best_action[1]]} {best_action[0]} {max(1, best_action[-1])}")
         if best_action[1] == 0:
             nb_brews += 1
-            last_brew = (nb_brews == 5) or (opponent_brews == 5)
 
         if profile:
             trace_execution()
